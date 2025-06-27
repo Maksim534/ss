@@ -7,7 +7,6 @@ import platform
 import socket
 import datetime
 from termcolor import colored
-import socks
 import urllib.request
 import pyfiglet
 
