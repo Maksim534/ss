@@ -616,7 +616,7 @@ async def handle_private_message(message: Message):
         return
 
     # Формируем подпись для админ-группы
-    caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})"
+    caption = f"📩 Новое сообщение от (ID: {user_id})"
     if message.caption:
         caption += f"\n\n{message.caption}"
     elif message.text:
