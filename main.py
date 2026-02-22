@@ -11,6 +11,9 @@ BOT_TOKEN = "8082248663:AAHwLh-RI-SKJkf3b7e-WeUjzkT31tOjYec"
 ADMIN_GROUP_ID = -1003893913068  # ID группы (отрицательное)
 ADMIN_IDS = [8564427714]  # Твой Telegram ID
 
+# Включаем логирование
+logging.basicConfig(level=logging.INFO)
+
 # === ИНИЦИАЛИЗАЦИЯ ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -19,21 +22,18 @@ dp = Dispatcher()
 def init_db():
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
-    # Таблица пользователей
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY,
                   username TEXT,
                   full_name TEXT,
                   banned INTEGER DEFAULT 0,
                   first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    # Таблица входящих сообщений (связь user_msg <-> group_msg)
     c.execute('''CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
                   group_msg_id INTEGER,
                   user_msg_id INTEGER,
                   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    # Таблица ответов админов (связь подтверждения в группе и отправленного сообщения пользователю)
     c.execute('''CREATE TABLE IF NOT EXISTS admin_replies
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   admin_id INTEGER,
@@ -43,6 +43,7 @@ def init_db():
                   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
+    logging.info("Database initialized")
 
 init_db()
 
@@ -78,6 +79,7 @@ async def save_message_link(user_id, group_msg_id, user_msg_id):
               (user_id, group_msg_id, user_msg_id))
     conn.commit()
     conn.close()
+    logging.info(f"Saved message link: user {user_id}, group_msg {group_msg_id}, user_msg {user_msg_id}")
 
 async def get_user_by_group_msg(group_msg_id):
     conn = sqlite3.connect('support.db')
@@ -85,15 +87,21 @@ async def get_user_by_group_msg(group_msg_id):
     c.execute("SELECT user_id, user_msg_id FROM messages WHERE group_msg_id=?", (group_msg_id,))
     row = c.fetchone()
     conn.close()
+    logging.info(f"Looking for user by group msg {group_msg_id}: found {row}")
     return row if row else (None, None)
 
 async def save_admin_reply(admin_id, user_id, group_confirm_msg_id, user_reply_msg_id):
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
-    c.execute("INSERT INTO admin_replies (admin_id, user_id, group_confirm_msg_id, user_reply_msg_id) VALUES (?, ?, ?, ?)",
-              (admin_id, user_id, group_confirm_msg_id, user_reply_msg_id))
-    conn.commit()
-    conn.close()
+    try:
+        c.execute("INSERT INTO admin_replies (admin_id, user_id, group_confirm_msg_id, user_reply_msg_id) VALUES (?, ?, ?, ?)",
+                  (admin_id, user_id, group_confirm_msg_id, user_reply_msg_id))
+        conn.commit()
+        logging.info(f"Saved admin reply: admin {admin_id}, user {user_id}, confirm {group_confirm_msg_id}, reply {user_reply_msg_id}")
+    except Exception as e:
+        logging.error(f"Error saving admin reply: {e}")
+    finally:
+        conn.close()
 
 async def get_admin_reply_by_confirm(group_confirm_msg_id):
     conn = sqlite3.connect('support.db')
@@ -101,6 +109,7 @@ async def get_admin_reply_by_confirm(group_confirm_msg_id):
     c.execute("SELECT admin_id, user_id, user_reply_msg_id FROM admin_replies WHERE group_confirm_msg_id=?", (group_confirm_msg_id,))
     row = c.fetchone()
     conn.close()
+    logging.info(f"Looking for admin reply by confirm {group_confirm_msg_id}: found {row}")
     return row if row else (None, None, None)
 
 async def delete_admin_reply_by_confirm(group_confirm_msg_id):
@@ -109,6 +118,7 @@ async def delete_admin_reply_by_confirm(group_confirm_msg_id):
     c.execute("DELETE FROM admin_replies WHERE group_confirm_msg_id=?", (group_confirm_msg_id,))
     conn.commit()
     conn.close()
+    logging.info(f"Deleted admin reply for confirm {group_confirm_msg_id}")
 
 async def get_all_users(banned=False):
     conn = sqlite3.connect('support.db')
@@ -126,7 +136,7 @@ async def get_all_users(banned=False):
 async def cmd_ban(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-
+    # ... (код без изменений, как в предыдущей версии)
     args = message.text.split()
     if len(args) < 2:
         if message.reply_to_message:
@@ -152,7 +162,6 @@ async def cmd_ban(message: Message):
 async def cmd_unban(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-
     args = message.text.split()
     if len(args) < 2:
         if message.reply_to_message:
@@ -178,7 +187,6 @@ async def cmd_unban(message: Message):
 async def cmd_stats(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
@@ -190,29 +198,21 @@ async def cmd_stats(message: Message):
     c.execute("SELECT COUNT(*) FROM admin_replies")
     replies = c.fetchone()[0]
     conn.close()
-
-    await message.reply(f"📊 Статистика:\n"
-                        f"Всего пользователей: {total}\n"
-                        f"Забанено: {banned}\n"
-                        f"Переслано сообщений: {msgs}\n"
-                        f"Ответов админов: {replies}")
+    await message.reply(f"📊 Статистика:\nВсего пользователей: {total}\nЗабанено: {banned}\nПереслано сообщений: {msgs}\nОтветов админов: {replies}")
 
 @dp.message(Command("broadcast"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_broadcast(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.reply("❌ Укажите текст рассылки.\nПример: /broadcast Всем привет!")
         return
-
     text = args[1]
     users = await get_all_users(banned=False)
     if not users:
         await message.reply("❌ Нет активных пользователей для рассылки.")
         return
-
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Подтвердить", callback_data=f"broadcast_confirm|{message.message_id}")
     builder.button(text="❌ Отмена", callback_data="broadcast_cancel")
@@ -226,11 +226,9 @@ async def broadcast_callback(callback: types.CallbackQuery):
     await callback.answer()
     if callback.from_user.id not in ADMIN_IDS:
         return
-
     if callback.data == "broadcast_cancel":
         await callback.message.edit_text("❌ Рассылка отменена.")
         return
-
     if callback.data.startswith("broadcast_confirm|"):
         original_text = callback.message.text
         if "\n\nТекст:\n" in original_text:
@@ -238,14 +236,11 @@ async def broadcast_callback(callback: types.CallbackQuery):
         else:
             await callback.message.edit_text("❌ Не удалось извлечь текст.")
             return
-
         users = await get_all_users(banned=False)
         if not users:
             await callback.message.edit_text("❌ Нет пользователей.")
             return
-
         await callback.message.edit_text(f"📢 Начинаю рассылку {len(users)} пользователям...")
-
         success = 0
         fail = 0
         for uid in users:
@@ -255,7 +250,6 @@ async def broadcast_callback(callback: types.CallbackQuery):
                 await asyncio.sleep(0.05)
             except Exception:
                 fail += 1
-
         await callback.message.edit_text(
             f"✅ Рассылка завершена.\n"
             f"Успешно: {success}\n"
@@ -277,20 +271,17 @@ async def cmd_del_reply(message: Message):
         await message.reply("❌ Это не подтверждение ответа или оно не найдено.")
         return
 
-    # Пытаемся удалить сообщение у пользователя
     try:
         await bot.delete_message(chat_id=user_id, message_id=user_reply_msg_id)
         user_delete_success = True
     except Exception:
         user_delete_success = False
 
-    # Удаляем подтверждение в группе
     try:
         await message.reply_to_message.delete()
     except Exception:
-        pass  # Если не удалилось, ничего страшного
+        pass
 
-    # Удаляем запись из БД
     await delete_admin_reply_by_confirm(replied_id)
 
     if user_delete_success:
@@ -318,7 +309,6 @@ async def cmd_edit_reply(message: Message):
         await message.reply("❌ Это не подтверждение ответа или оно не найдено.")
         return
 
-    # Редактируем сообщение у пользователя
     try:
         await bot.edit_message_text(chat_id=user_id, message_id=user_reply_msg_id, text=f"💬 Ответ от поддержки:\n\n{new_text}")
         user_edit_success = True
@@ -326,7 +316,6 @@ async def cmd_edit_reply(message: Message):
         user_edit_success = False
         edit_error = str(e)
 
-    # Редактируем подтверждение в группе (меняем текст)
     try:
         await message.reply_to_message.edit_text(f"✅ Ответ отредактирован (новый текст отправлен).\n\nНовый текст: {new_text}")
     except Exception:
@@ -340,7 +329,6 @@ async def cmd_edit_reply(message: Message):
 # ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНОВ В ГРУППЕ (новые ответы) ==========
 @dp.message(F.chat.id == ADMIN_GROUP_ID)
 async def handle_group_reply(message: Message):
-    # Срабатывает только на ответы (reply) от админов, которые не являются командами (команды отловлены выше)
     if not message.reply_to_message or message.from_user.id not in ADMIN_IDS:
         return
     # Если это команда (уже проверили, но на всякий случай)
@@ -365,7 +353,7 @@ async def handle_group_reply(message: Message):
             text=f"💬 Ответ от поддержки:\n\n{message.text}",
             reply_to_message_id=user_msg_id
         )
-        # Отправляем подтверждение в группу и сохраняем связь
+        # Отправляем подтверждение в группу
         confirm = await message.reply("✅ Ответ отправлен (с реплаем).")
         # Сохраняем связь между подтверждением и отправленным сообщением
         await save_admin_reply(message.from_user.id, user_id, confirm.message_id, sent.message_id)
@@ -390,8 +378,10 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
-    # Игнорируем команды (начинаются с /)
-    if (message.text and message.text.startswith('/')) or (message.caption and message.caption.startswith('/')):
+    # 🔥 ЖЕСТКАЯ ПРОВЕРКА НА КОМАНДЫ
+    # Проверяем текст или подпись на наличие слеша в начале
+    text_to_check = message.text or message.caption or ''
+    if text_to_check.startswith('/'):
         await message.reply("❌ Эта команда не поддерживается. Просто напишите сообщение, и администратор ответит вам.")
         return
 
@@ -403,12 +393,16 @@ async def handle_private_message(message: Message):
         caption += f"\n\n{message.text}"
 
     # Пересылаем в группу
-    if message.content_type != ContentType.TEXT:
-        sent = await message.copy_to(chat_id=ADMIN_GROUP_ID, caption=caption)
-    else:
-        sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
+    try:
+        if message.content_type != ContentType.TEXT:
+            sent = await message.copy_to(chat_id=ADMIN_GROUP_ID, caption=caption)
+        else:
+            sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
 
-    await save_message_link(user_id, sent.message_id, message.message_id)
+        await save_message_link(user_id, sent.message_id, message.message_id)
+    except Exception as e:
+        logging.error(f"Error forwarding message: {e}")
+        await message.reply("❌ Произошла ошибка при отправке сообщения.")
 
 # ========== ЗАПУСК ==========
 async def main():
