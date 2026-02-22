@@ -422,7 +422,7 @@ async def broadcast_callback(callback: types.CallbackQuery):
         fail = 0
         for uid in users:
             try:
-                await bot.send_message(uid, f"📢 Рассылка:\n\n{text}")
+                await bot.send_message(uid, f"{text}")
                 success += 1
                 await asyncio.sleep(0.05)
             except Exception:
@@ -559,7 +559,7 @@ async def handle_group_reply(message: Message):
         if message.content_type == ContentType.TEXT:
             sent = await bot.send_message(
                 chat_id=user_id,
-                text=f"💬 Ответ от поддержки:\n\n{message.text}",
+                text=f"{message.text}",
                 reply_to_message_id=user_msg_id
             )
         elif message.content_type == ContentType.STICKER:
