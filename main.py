@@ -19,17 +19,27 @@ dp = Dispatcher()
 def init_db():
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
+    # Таблица пользователей
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY,
                   username TEXT,
                   full_name TEXT,
                   banned INTEGER DEFAULT 0,
                   first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    # Таблица входящих сообщений (связь user_msg <-> group_msg)
     c.execute('''CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
                   group_msg_id INTEGER,
                   user_msg_id INTEGER,
+                  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    # Таблица ответов админов (связь подтверждения в группе и отправленного сообщения пользователю)
+    c.execute('''CREATE TABLE IF NOT EXISTS admin_replies
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  admin_id INTEGER,
+                  user_id INTEGER,
+                  group_confirm_msg_id INTEGER UNIQUE,
+                  user_reply_msg_id INTEGER,
                   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
@@ -76,6 +86,29 @@ async def get_user_by_group_msg(group_msg_id):
     row = c.fetchone()
     conn.close()
     return row if row else (None, None)
+
+async def save_admin_reply(admin_id, user_id, group_confirm_msg_id, user_reply_msg_id):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO admin_replies (admin_id, user_id, group_confirm_msg_id, user_reply_msg_id) VALUES (?, ?, ?, ?)",
+              (admin_id, user_id, group_confirm_msg_id, user_reply_msg_id))
+    conn.commit()
+    conn.close()
+
+async def get_admin_reply_by_confirm(group_confirm_msg_id):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("SELECT admin_id, user_id, user_reply_msg_id FROM admin_replies WHERE group_confirm_msg_id=?", (group_confirm_msg_id,))
+    row = c.fetchone()
+    conn.close()
+    return row if row else (None, None, None)
+
+async def delete_admin_reply_by_confirm(group_confirm_msg_id):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM admin_replies WHERE group_confirm_msg_id=?", (group_confirm_msg_id,))
+    conn.commit()
+    conn.close()
 
 async def get_all_users(banned=False):
     conn = sqlite3.connect('support.db')
@@ -154,9 +187,15 @@ async def cmd_stats(message: Message):
     banned = c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM messages")
     msgs = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM admin_replies")
+    replies = c.fetchone()[0]
     conn.close()
 
-    await message.reply(f"📊 Статистика:\nВсего: {total}\nЗабанено: {banned}\nСообщений: {msgs}")
+    await message.reply(f"📊 Статистика:\n"
+                        f"Всего пользователей: {total}\n"
+                        f"Забанено: {banned}\n"
+                        f"Переслано сообщений: {msgs}\n"
+                        f"Ответов админов: {replies}")
 
 @dp.message(Command("broadcast"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_broadcast(message: Message):
@@ -223,16 +262,95 @@ async def broadcast_callback(callback: types.CallbackQuery):
             f"Не удалось: {fail}"
         )
 
-# ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНОВ В ГРУППЕ ==========
+# ========== КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ОТВЕТАМИ (удаление/редактирование) ==========
+@dp.message(Command("del"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_del_reply(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    if not message.reply_to_message:
+        await message.reply("❌ Ответьте на сообщение с подтверждением, которое хотите удалить.")
+        return
+
+    replied_id = message.reply_to_message.message_id
+    admin_id, user_id, user_reply_msg_id = await get_admin_reply_by_confirm(replied_id)
+    if not admin_id:
+        await message.reply("❌ Это не подтверждение ответа или оно не найдено.")
+        return
+
+    # Пытаемся удалить сообщение у пользователя
+    try:
+        await bot.delete_message(chat_id=user_id, message_id=user_reply_msg_id)
+        user_delete_success = True
+    except Exception:
+        user_delete_success = False
+
+    # Удаляем подтверждение в группе
+    try:
+        await message.reply_to_message.delete()
+    except Exception:
+        pass  # Если не удалилось, ничего страшного
+
+    # Удаляем запись из БД
+    await delete_admin_reply_by_confirm(replied_id)
+
+    if user_delete_success:
+        await message.reply("✅ Сообщение удалено у пользователя и в группе.")
+    else:
+        await message.reply("⚠️ Сообщение в группе удалено, но у пользователя не удалось (возможно, слишком старое).")
+
+@dp.message(Command("edit"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_edit_reply(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    if not message.reply_to_message:
+        await message.reply("❌ Ответьте на сообщение с подтверждением, которое хотите отредактировать.")
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply("❌ Укажите новый текст после команды.\nПример: /edit Новый текст ответа")
+        return
+    new_text = args[1]
+
+    replied_id = message.reply_to_message.message_id
+    admin_id, user_id, user_reply_msg_id = await get_admin_reply_by_confirm(replied_id)
+    if not admin_id:
+        await message.reply("❌ Это не подтверждение ответа или оно не найдено.")
+        return
+
+    # Редактируем сообщение у пользователя
+    try:
+        await bot.edit_message_text(chat_id=user_id, message_id=user_reply_msg_id, text=f"💬 Ответ от поддержки:\n\n{new_text}")
+        user_edit_success = True
+    except Exception as e:
+        user_edit_success = False
+        edit_error = str(e)
+
+    # Редактируем подтверждение в группе (меняем текст)
+    try:
+        await message.reply_to_message.edit_text(f"✅ Ответ отредактирован (новый текст отправлен).\n\nНовый текст: {new_text}")
+    except Exception:
+        pass
+
+    if user_edit_success:
+        await message.reply("✅ Сообщение отредактировано у пользователя и в группе.")
+    else:
+        await message.reply(f"❌ Не удалось отредактировать у пользователя: {edit_error}")
+
+# ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНОВ В ГРУППЕ (новые ответы) ==========
 @dp.message(F.chat.id == ADMIN_GROUP_ID)
 async def handle_group_reply(message: Message):
+    # Срабатывает только на ответы (reply) от админов, которые не являются командами (команды отловлены выше)
     if not message.reply_to_message or message.from_user.id not in ADMIN_IDS:
+        return
+    # Если это команда (уже проверили, но на всякий случай)
+    if message.text and message.text.startswith('/'):
         return
 
     replied_id = message.reply_to_message.message_id
     user_id, user_msg_id = await get_user_by_group_msg(replied_id)
     if not user_id:
-        await message.reply("❌ Не удалось найти пользователя.")
+        await message.reply("❌ Не удалось найти пользователя. Возможно, это не входящее сообщение.")
         return
 
     user = await get_user(user_id)
@@ -241,14 +359,18 @@ async def handle_group_reply(message: Message):
         return
 
     try:
-        await bot.send_message(
+        # Отправляем ответ пользователю
+        sent = await bot.send_message(
             chat_id=user_id,
             text=f"💬 Ответ от поддержки:\n\n{message.text}",
             reply_to_message_id=user_msg_id
         )
-        await message.reply("✅ Ответ отправлен (с реплаем).")
+        # Отправляем подтверждение в группу и сохраняем связь
+        confirm = await message.reply("✅ Ответ отправлен (с реплаем).")
+        # Сохраняем связь между подтверждением и отправленным сообщением
+        await save_admin_reply(message.from_user.id, user_id, confirm.message_id, sent.message_id)
     except Exception as e:
-        await message.reply(f"❌ Ошибка: {e}")
+        await message.reply(f"❌ Ошибка при отправке: {e}")
 
 # ========== ОБРАБОТЧИКИ ЛИЧНЫХ СООБЩЕНИЙ ==========
 @dp.message(Command("start"), F.chat.type == "private")
@@ -268,6 +390,11 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
+    # Игнорируем команды (начинаются с /)
+    if (message.text and message.text.startswith('/')) or (message.caption and message.caption.startswith('/')):
+        await message.reply("❌ Эта команда не поддерживается. Просто напишите сообщение, и администратор ответит вам.")
+        return
+
     # Формируем подпись для админ-группы
     caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})"
     if message.caption:
@@ -275,12 +402,10 @@ async def handle_private_message(message: Message):
     elif message.text:
         caption += f"\n\n{message.text}"
 
-    # Если сообщение содержит медиа (фото, видео, гифку, стикер и т.д.)
+    # Пересылаем в группу
     if message.content_type != ContentType.TEXT:
-        # Копируем медиа в группу с подписью
         sent = await message.copy_to(chat_id=ADMIN_GROUP_ID, caption=caption)
     else:
-        # Просто текст
         sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
 
     await save_message_link(user_id, sent.message_id, message.message_id)
