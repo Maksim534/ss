@@ -284,7 +284,6 @@ async def handle_private_message(message: Message):
         sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
 
     await save_message_link(user_id, sent.message_id, message.message_id)
-    await message.reply("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.")
 
 # ========== ЗАПУСК ==========
 async def main():
