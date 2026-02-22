@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # === НАСТРОЙКИ ===
 BOT_TOKEN = "8082248663:AAHwLh-RI-SKJkf3b7e-WeUjzkT31tOjYec"
 ADMIN_GROUP_ID = -1003893913068  # ID группы (отрицательное)
-ADMIN_IDS = [8564427714]  # Твой Telegram ID
+SUPER_ADMIN_IDS = [8564427714]   # ID супер-админов (могут управлять админами и имеют все права)
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
@@ -22,18 +22,21 @@ dp = Dispatcher()
 def init_db():
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
+    # Таблица пользователей
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY,
                   username TEXT,
                   full_name TEXT,
                   banned INTEGER DEFAULT 0,
                   first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    # Таблица входящих сообщений
     c.execute('''CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
                   group_msg_id INTEGER,
                   user_msg_id INTEGER,
                   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    # Таблица ответов админов
     c.execute('''CREATE TABLE IF NOT EXISTS admin_replies
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   admin_id INTEGER,
@@ -41,6 +44,17 @@ def init_db():
                   group_confirm_msg_id INTEGER UNIQUE,
                   user_reply_msg_id INTEGER,
                   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    # Таблица администраторов
+    c.execute('''CREATE TABLE IF NOT EXISTS admins
+                 (user_id INTEGER PRIMARY KEY,
+                  can_ban INTEGER DEFAULT 0,
+                  added_by INTEGER,
+                  added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+
+    # Добавляем супер-админов в таблицу админов (если их там нет)
+    for uid in SUPER_ADMIN_IDS:
+        c.execute("INSERT OR IGNORE INTO admins (user_id, can_ban) VALUES (?, 1)", (uid,))
     conn.commit()
     conn.close()
     logging.info("Database initialized")
@@ -131,12 +145,152 @@ async def get_all_users(banned=False):
     conn.close()
     return [row[0] for row in rows]
 
-# ========== КОМАНДЫ ДЛЯ АДМИНОВ (работают только в группе) ==========
+# === ФУНКЦИИ ДЛЯ РАБОТЫ С АДМИНАМИ ===
+async def is_admin(user_id):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+async def can_ban(user_id):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("SELECT can_ban FROM admins WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row and row[0] == 1
+
+async def is_super_admin(user_id):
+    return user_id in SUPER_ADMIN_IDS
+
+async def add_admin(user_id, can_ban, added_by):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO admins (user_id, can_ban, added_by) VALUES (?, ?, ?)",
+              (user_id, 1 if can_ban else 0, added_by))
+    conn.commit()
+    conn.close()
+
+async def remove_admin(user_id):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+async def set_admin_rights(user_id, can_ban):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("UPDATE admins SET can_ban=? WHERE user_id=?", (1 if can_ban else 0, user_id))
+    conn.commit()
+    conn.close()
+
+async def list_admins():
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    c.execute("SELECT user_id, can_ban FROM admins")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+# ========== КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ АДМИНАМИ (только супер-админы) ==========
+@dp.message(Command("addadmin"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_add_admin(message: Message):
+    if not await is_super_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply("❌ Укажите ID пользователя.\nПример: /addadmin 123456789 [can_ban]")
+        return
+
+    try:
+        user_id = int(args[1])
+    except ValueError:
+        await message.reply("❌ Неверный ID.")
+        return
+
+    can_ban = 0
+    if len(args) >= 3 and args[2].lower() in ['1', 'true', 'yes', 'да']:
+        can_ban = 1
+
+    await add_admin(user_id, can_ban, message.from_user.id)
+    await message.reply(f"✅ Пользователь {user_id} добавлен в админы. Право бана: {'да' if can_ban else 'нет'}.")
+
+@dp.message(Command("removeadmin"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_remove_admin(message: Message):
+    if not await is_super_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply("❌ Укажите ID пользователя.\nПример: /removeadmin 123456789")
+        return
+
+    try:
+        user_id = int(args[1])
+    except ValueError:
+        await message.reply("❌ Неверный ID.")
+        return
+
+    if user_id in SUPER_ADMIN_IDS:
+        await message.reply("❌ Нельзя удалить супер-админа.")
+        return
+
+    await remove_admin(user_id)
+    await message.reply(f"✅ Пользователь {user_id} удалён из админов.")
+
+@dp.message(Command("setadminrights"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_set_admin_rights(message: Message):
+    if not await is_super_admin(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) < 3:
+        await message.reply("❌ Укажите ID и право.\nПример: /setadminrights 123456789 1")
+        return
+
+    try:
+        user_id = int(args[1])
+        can_ban = 1 if args[2].lower() in ['1', 'true', 'yes', 'да'] else 0
+    except ValueError:
+        await message.reply("❌ Неверный формат.")
+        return
+
+    if user_id in SUPER_ADMIN_IDS:
+        await message.reply("❌ Нельзя изменить права супер-админа.")
+        return
+
+    await set_admin_rights(user_id, can_ban)
+    await message.reply(f"✅ Права пользователя {user_id} обновлены. Право бана: {'да' if can_ban else 'нет'}.")
+
+@dp.message(Command("listadmins"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_list_admins(message: Message):
+    if not await is_super_admin(message.from_user.id):
+        return
+
+    admins = await list_admins()
+    if not admins:
+        await message.reply("📋 Список админов пуст.")
+        return
+
+    text = "📋 Список администраторов:\n\n"
+    for uid, ban in admins:
+        super_text = " (супер)" if uid in SUPER_ADMIN_IDS else ""
+        text += f"• {uid}{super_text} — бан: {'да' if ban else 'нет'}\n"
+    await message.reply(text)
+
+# ========== КОМАНДЫ ДЛЯ АДМИНОВ (с проверкой прав) ==========
 @dp.message(Command("ban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_ban(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not await is_admin(message.from_user.id):
         return
-    # ... (код без изменений, как в предыдущей версии)
+    if not await can_ban(message.from_user.id) and not await is_super_admin(message.from_user.id):
+        await message.reply("❌ У вас нет права на бан.")
+        return
+
     args = message.text.split()
     if len(args) < 2:
         if message.reply_to_message:
@@ -160,8 +314,12 @@ async def cmd_ban(message: Message):
 
 @dp.message(Command("unban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_unban(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not await is_admin(message.from_user.id):
         return
+    if not await can_ban(message.from_user.id) and not await is_super_admin(message.from_user.id):
+        await message.reply("❌ У вас нет права на разбан.")
+        return
+
     args = message.text.split()
     if len(args) < 2:
         if message.reply_to_message:
@@ -185,8 +343,9 @@ async def cmd_unban(message: Message):
 
 @dp.message(Command("stats"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_stats(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not await is_admin(message.from_user.id):
         return
+
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
@@ -197,22 +356,32 @@ async def cmd_stats(message: Message):
     msgs = c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM admin_replies")
     replies = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM admins")
+    admins = c.fetchone()[0]
     conn.close()
-    await message.reply(f"📊 Статистика:\nВсего пользователей: {total}\nЗабанено: {banned}\nПереслано сообщений: {msgs}\nОтветов админов: {replies}")
+    await message.reply(f"📊 Статистика:\n"
+                        f"Всего пользователей: {total}\n"
+                        f"Забанено: {banned}\n"
+                        f"Переслано сообщений: {msgs}\n"
+                        f"Ответов админов: {replies}\n"
+                        f"Администраторов: {admins}")
 
 @dp.message(Command("broadcast"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_broadcast(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not await is_admin(message.from_user.id):
         return
+
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.reply("❌ Укажите текст рассылки.\nПример: /broadcast Всем привет!")
         return
+
     text = args[1]
     users = await get_all_users(banned=False)
     if not users:
         await message.reply("❌ Нет активных пользователей для рассылки.")
         return
+
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Подтвердить", callback_data=f"broadcast_confirm|{message.message_id}")
     builder.button(text="❌ Отмена", callback_data="broadcast_cancel")
@@ -223,12 +392,15 @@ async def cmd_broadcast(message: Message):
 
 @dp.callback_query(lambda c: c.data.startswith("broadcast_"))
 async def broadcast_callback(callback: types.CallbackQuery):
-    await callback.answer()
-    if callback.from_user.id not in ADMIN_IDS:
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет прав", show_alert=True)
         return
+
+    await callback.answer()
     if callback.data == "broadcast_cancel":
         await callback.message.edit_text("❌ Рассылка отменена.")
         return
+
     if callback.data.startswith("broadcast_confirm|"):
         original_text = callback.message.text
         if "\n\nТекст:\n" in original_text:
@@ -236,11 +408,14 @@ async def broadcast_callback(callback: types.CallbackQuery):
         else:
             await callback.message.edit_text("❌ Не удалось извлечь текст.")
             return
+
         users = await get_all_users(banned=False)
         if not users:
             await callback.message.edit_text("❌ Нет пользователей.")
             return
+
         await callback.message.edit_text(f"📢 Начинаю рассылку {len(users)} пользователям...")
+
         success = 0
         fail = 0
         for uid in users:
@@ -250,16 +425,17 @@ async def broadcast_callback(callback: types.CallbackQuery):
                 await asyncio.sleep(0.05)
             except Exception:
                 fail += 1
+
         await callback.message.edit_text(
             f"✅ Рассылка завершена.\n"
             f"Успешно: {success}\n"
             f"Не удалось: {fail}"
         )
 
-# ========== КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ОТВЕТАМИ (удаление/редактирование) ==========
+# ========== КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ОТВЕТАМИ (доступны всем админам) ==========
 @dp.message(Command("del"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_del_reply(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not await is_admin(message.from_user.id):
         return
     if not message.reply_to_message:
         await message.reply("❌ Ответьте на сообщение с подтверждением, которое хотите удалить.")
@@ -291,7 +467,7 @@ async def cmd_del_reply(message: Message):
 
 @dp.message(Command("edit"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_edit_reply(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
+    if not await is_admin(message.from_user.id):
         return
     if not message.reply_to_message:
         await message.reply("❌ Ответьте на сообщение с подтверждением, которое хотите отредактировать.")
@@ -329,9 +505,10 @@ async def cmd_edit_reply(message: Message):
 # ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНОВ В ГРУППЕ (новые ответы) ==========
 @dp.message(F.chat.id == ADMIN_GROUP_ID)
 async def handle_group_reply(message: Message):
-    if not message.reply_to_message or message.from_user.id not in ADMIN_IDS:
+    if not message.reply_to_message:
         return
-    # Если это команда (уже проверили, но на всякий случай)
+    if not await is_admin(message.from_user.id):
+        return
     if message.text and message.text.startswith('/'):
         return
 
@@ -378,8 +555,7 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
-    # 🔥 ЖЕСТКАЯ ПРОВЕРКА НА КОМАНДЫ
-    # Проверяем текст или подпись на наличие слеша в начале
+    # Игнорируем команды (начинаются с /)
     text_to_check = message.text or message.caption or ''
     if text_to_check.startswith('/'):
         await message.reply("❌ Эта команда не поддерживается. Просто напишите сообщение, и администратор ответит вам.")
@@ -403,6 +579,43 @@ async def handle_private_message(message: Message):
     except Exception as e:
         logging.error(f"Error forwarding message: {e}")
         await message.reply("❌ Произошла ошибка при отправке сообщения.")
+
+
+@dp.message(Command("help_adm"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_help_adm(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    help_text = (
+        "📋 **Справка по командам администратора**\n\n"
+        
+        "**👑 Управление админами** (только супер-админы)\n"
+        "• `/addadmin ID [0/1]` – добавить админа (1 — дать право бана)\n"
+        "• `/removeadmin ID` – удалить админа\n"
+        "• `/setadminrights ID 0/1` – изменить право бана\n"
+        "• `/listadmins` – список всех админов\n\n"
+
+        "**🔨 Модерация**\n"
+        "• `/ban` – забанить пользователя (ответом на его сообщение или указав ID)\n"
+        "• `/unban` – разбанить пользователя (ответом или ID)\n\n"
+
+        "**📊 Информация**\n"
+        "• `/stats` – статистика бота\n"
+        "• `/help_adm` – эта справка\n\n"
+
+        "**📢 Рассылка**\n"
+        "• `/broadcast текст` – запустить рассылку всем пользователям\n\n"
+
+        "**✏️ Управление ответами**\n"
+        "• `/del` – удалить свой ответ (ответьте на подтверждение)\n"
+        "• `/edit новый текст` – отредактировать отправленный ответ (ответьте на подтверждение)\n\n"
+
+        "**💬 Ответы пользователям**\n"
+        "• Просто ответьте на пересланное сообщение в группе — ответ уйдёт пользователю"
+    )
+    await message.reply(help_text)
+
+
 
 # ========== ЗАПУСК ==========
 async def main():
