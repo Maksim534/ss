@@ -1,9 +1,10 @@
 import logging
 import sqlite3
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, ContentType
 import asyncio
+
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = "8082248663:AAHwLh-RI-SKJkf3b7e-WeUjzkT31tOjYec"
@@ -77,21 +78,16 @@ async def get_user_by_group_msg(group_msg_id):
     return row[0] if row else None
 
 # === КОМАНДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (личка) ===
-@dp.message(Command("start"))
+@dp.message(Command("start"), F.chat.type == "private")
 async def cmd_start(message: Message):
-    if message.chat.type != "private":
-        return
     await add_or_update_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
     text = ("👋 Привет! Я бот поддержки. Напиши мне сообщение, и оно будет передано нашим специалистам.\n"
             "Они ответят тебе в ближайшее время.")
     await message.reply(text)
 
 # === ОБРАБОТКА ЛИЧНЫХ СООБЩЕНИЙ ===
-@dp.message()
+@dp.message(F.chat.type == "private")
 async def handle_private_message(message: Message):
-    if message.chat.type != "private":
-        return
-
     user_id = message.from_user.id
     await add_or_update_user(user_id, message.from_user.username, message.from_user.full_name)
 
@@ -101,14 +97,15 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
-    # Пересылаем сообщение в админ-группу
     # Формируем подпись
-    caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})\n\n{message.text}"
-    if message.media:
-        # Если есть медиа, можно переслать как копию с подписью
+    caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})\n\n{message.text or ''}"
+
+    # Пересылаем в админ-группу с учётом типа контента
+    if message.content_type != ContentType.TEXT:
+        # Это медиа (фото, видео, документ и т.д.) – копируем с подписью
         sent = await message.copy_to(chat_id=ADMIN_GROUP_ID, caption=caption)
     else:
-        # Просто текст
+        # Текстовое сообщение – отправляем как есть с подписью
         sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
 
     # Сохраняем связь
@@ -118,10 +115,8 @@ async def handle_private_message(message: Message):
     await message.reply("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.")
 
 # === ОБРАБОТКА СООБЩЕНИЙ В ГРУППЕ (ответы админов) ===
-@dp.message()
+@dp.message(F.chat.id == ADMIN_GROUP_ID)
 async def handle_group_reply(message: Message):
-    if message.chat.id != ADMIN_GROUP_ID:
-        return
     if not message.reply_to_message:
         return  # отвечаем только на пересланные сообщения
 
@@ -151,16 +146,15 @@ async def handle_group_reply(message: Message):
         await message.reply(f"❌ Ошибка при отправке: {e}")
 
 # === КОМАНДЫ ДЛЯ АДМИНОВ В ГРУППЕ ===
-@dp.message(Command("ban"))
+@dp.message(Command("ban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_ban(message: Message):
-    if message.chat.id != ADMIN_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+    if message.from_user.id not in ADMIN_IDS:
         return
 
     args = message.text.split()
     if len(args) < 2:
         # Пытаемся взять user_id из ответа
         if message.reply_to_message:
-            # Ищем user_id по исходному сообщению в группе
             replied_id = message.reply_to_message.message_id
             user_id = await get_user_by_group_msg(replied_id)
             if not user_id:
@@ -170,14 +164,18 @@ async def cmd_ban(message: Message):
             await message.reply("❌ Укажите ID пользователя или ответьте на его сообщение.\nПример: /ban 123456789")
             return
     else:
-        user_id = int(args[1])
+        try:
+            user_id = int(args[1])
+        except ValueError:
+            await message.reply("❌ Неверный формат ID.")
+            return
 
     await set_banned(user_id, True)
     await message.reply(f"✅ Пользователь {user_id} заблокирован.")
 
-@dp.message(Command("unban"))
+@dp.message(Command("unban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_unban(message: Message):
-    if message.chat.id != ADMIN_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+    if message.from_user.id not in ADMIN_IDS:
         return
 
     args = message.text.split()
@@ -192,14 +190,18 @@ async def cmd_unban(message: Message):
             await message.reply("❌ Укажите ID пользователя.")
             return
     else:
-        user_id = int(args[1])
+        try:
+            user_id = int(args[1])
+        except ValueError:
+            await message.reply("❌ Неверный формат ID.")
+            return
 
     await set_banned(user_id, False)
     await message.reply(f"✅ Пользователь {user_id} разблокирован.")
 
-@dp.message(Command("stats"))
+@dp.message(Command("stats"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_stats(message: Message):
-    if message.chat.id != ADMIN_GROUP_ID or message.from_user.id not in ADMIN_IDS:
+    if message.from_user.id not in ADMIN_IDS:
         return
 
     conn = sqlite3.connect('support.db')
