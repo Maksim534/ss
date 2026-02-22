@@ -72,10 +72,21 @@ async def save_message_link(user_id, group_msg_id, user_msg_id):
 async def get_user_by_group_msg(group_msg_id):
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
-    c.execute("SELECT user_id FROM messages WHERE group_msg_id=?", (group_msg_id,))
+    c.execute("SELECT user_id, user_msg_id FROM messages WHERE group_msg_id=?", (group_msg_id,))
     row = c.fetchone()
     conn.close()
-    return row[0] if row else None
+    return row if row else (None, None)
+
+async def get_all_users(banned=False):
+    conn = sqlite3.connect('support.db')
+    c = conn.cursor()
+    if banned:
+        c.execute("SELECT user_id FROM users WHERE banned=1")
+    else:
+        c.execute("SELECT user_id FROM users WHERE banned=0")
+    rows = c.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
 
 # === КОМАНДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (личка) ===
 @dp.message(Command("start"), F.chat.type == "private")
@@ -91,61 +102,50 @@ async def handle_private_message(message: Message):
     user_id = message.from_user.id
     await add_or_update_user(user_id, message.from_user.username, message.from_user.full_name)
 
-    # Проверка бана
     user = await get_user(user_id)
-    if user and user[3] == 1:  # banned = 1
+    if user and user[3] == 1:
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
-    # Формируем подпись
     caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})\n\n{message.text or ''}"
 
-    # Пересылаем в админ-группу с учётом типа контента
     if message.content_type != ContentType.TEXT:
-        # Это медиа (фото, видео, документ и т.д.) – копируем с подписью
         sent = await message.copy_to(chat_id=ADMIN_GROUP_ID, caption=caption)
     else:
-        # Текстовое сообщение – отправляем как есть с подписью
         sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
 
-    # Сохраняем связь
     await save_message_link(user_id, sent.message_id, message.message_id)
-
-    # Подтверждение пользователю
     await message.reply("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.")
 
-# === ОБРАБОТКА СООБЩЕНИЙ В ГРУППЕ (ответы админов) ===
+# === ОБРАБОТКА ОТВЕТОВ АДМИНОВ В ГРУППЕ ===
 @dp.message(F.chat.id == ADMIN_GROUP_ID)
 async def handle_group_reply(message: Message):
-    if not message.reply_to_message:
-        return  # отвечаем только на пересланные сообщения
-
-    # Проверяем, что автор ответа - админ
-    if message.from_user.id not in ADMIN_IDS:
-        await message.reply("❌ Только админ может отвечать.")
+    if not message.reply_to_message or message.from_user.id not in ADMIN_IDS:
         return
 
-    # Ищем, какому пользователю принадлежит исходное сообщение
-    replied_msg_id = message.reply_to_message.message_id
-    user_id = await get_user_by_group_msg(replied_msg_id)
+    replied_id = message.reply_to_message.message_id
+    user_id, user_msg_id = await get_user_by_group_msg(replied_id)
     if not user_id:
-        await message.reply("❌ Не удалось найти пользователя для этого сообщения.")
+        await message.reply("❌ Не удалось найти пользователя.")
         return
 
-    # Проверяем, не забанен ли пользователь
     user = await get_user(user_id)
     if user and user[3] == 1:
-        await message.reply("❌ Этот пользователь заблокирован, ответ не будет отправлен.")
+        await message.reply("❌ Пользователь заблокирован.")
         return
 
-    # Отправляем ответ пользователю
     try:
-        await bot.send_message(chat_id=user_id, text=f"💬 Ответ от поддержки:\n\n{message.text}")
-        await message.reply("✅ Ответ отправлен пользователю.")
+        # Отправляем ответ как reply на конкретное сообщение пользователя
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"💬 Ответ от поддержки:\n\n{message.text}",
+            reply_to_message_id=user_msg_id
+        )
+        await message.reply("✅ Ответ отправлен (с реплаем).")
     except Exception as e:
-        await message.reply(f"❌ Ошибка при отправке: {e}")
+        await message.reply(f"❌ Ошибка: {e}")
 
-# === КОМАНДЫ ДЛЯ АДМИНОВ В ГРУППЕ ===
+# === КОМАНДЫ АДМИНОВ ===
 @dp.message(Command("ban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_ban(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -153,25 +153,24 @@ async def cmd_ban(message: Message):
 
     args = message.text.split()
     if len(args) < 2:
-        # Пытаемся взять user_id из ответа
         if message.reply_to_message:
             replied_id = message.reply_to_message.message_id
-            user_id = await get_user_by_group_msg(replied_id)
+            user_id, _ = await get_user_by_group_msg(replied_id)
             if not user_id:
                 await message.reply("❌ Не удалось определить пользователя.")
                 return
         else:
-            await message.reply("❌ Укажите ID пользователя или ответьте на его сообщение.\nПример: /ban 123456789")
+            await message.reply("❌ Укажите ID или ответьте на сообщение.\nПример: /ban 123456789")
             return
     else:
         try:
             user_id = int(args[1])
         except ValueError:
-            await message.reply("❌ Неверный формат ID.")
+            await message.reply("❌ Неверный ID.")
             return
 
     await set_banned(user_id, True)
-    await message.reply(f"✅ Пользователь {user_id} заблокирован.")
+    await message.reply(f"✅ Пользователь {user_id} забанен.")
 
 @dp.message(Command("unban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_unban(message: Message):
@@ -182,22 +181,22 @@ async def cmd_unban(message: Message):
     if len(args) < 2:
         if message.reply_to_message:
             replied_id = message.reply_to_message.message_id
-            user_id = await get_user_by_group_msg(replied_id)
+            user_id, _ = await get_user_by_group_msg(replied_id)
             if not user_id:
                 await message.reply("❌ Не удалось определить пользователя.")
                 return
         else:
-            await message.reply("❌ Укажите ID пользователя.")
+            await message.reply("❌ Укажите ID.")
             return
     else:
         try:
             user_id = int(args[1])
         except ValueError:
-            await message.reply("❌ Неверный формат ID.")
+            await message.reply("❌ Неверный ID.")
             return
 
     await set_banned(user_id, False)
-    await message.reply(f"✅ Пользователь {user_id} разблокирован.")
+    await message.reply(f"✅ Пользователь {user_id} разбанен.")
 
 @dp.message(Command("stats"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_stats(message: Message):
@@ -207,17 +206,83 @@ async def cmd_stats(message: Message):
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
-    total_users = c.fetchone()[0]
+    total = c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM users WHERE banned=1")
-    banned_users = c.fetchone()[0]
+    banned = c.fetchone()[0]
     c.execute("SELECT COUNT(*) FROM messages")
-    total_msgs = c.fetchone()[0]
+    msgs = c.fetchone()[0]
     conn.close()
 
-    await message.reply(f"📊 Статистика:\n"
-                        f"Всего пользователей: {total_users}\n"
-                        f"Заблокировано: {banned_users}\n"
-                        f"Переслано сообщений: {total_msgs}")
+    await message.reply(f"📊 Статистика:\nВсего: {total}\nЗабанено: {banned}\nСообщений: {msgs}")
+
+# === РАССЫЛКА (BROADCAST) ===
+@dp.message(Command("broadcast"), F.chat.id == ADMIN_GROUP_ID)
+async def cmd_broadcast(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply("❌ Укажите текст рассылки.\nПример: /broadcast Всем привет!")
+        return
+
+    text = args[1]
+    users = await get_all_users(banned=False)
+    if not users:
+        await message.reply("❌ Нет активных пользователей для рассылки.")
+        return
+
+    # Кнопки подтверждения
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить", callback_data=f"broadcast_confirm|{message.message_id}")
+    builder.button(text="❌ Отмена", callback_data="broadcast_cancel")
+    await message.reply(
+        f"📢 Будет отправлено **{len(users)}** пользователям.\n\nТекст:\n{text}",
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(lambda c: c.data.startswith("broadcast_"))
+async def broadcast_callback(callback: types.CallbackQuery):
+    await callback.answer()
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    if callback.data == "broadcast_cancel":
+        await callback.message.edit_text("❌ Рассылка отменена.")
+        return
+
+    if callback.data.startswith("broadcast_confirm|"):
+        # Получаем текст из исходного сообщения
+        original_text = callback.message.text
+        # Извлекаем текст после "Текст:\n"
+        if "\n\nТекст:\n" in original_text:
+            text = original_text.split("\n\nТекст:\n", 1)[1]
+        else:
+            await callback.message.edit_text("❌ Не удалось извлечь текст.")
+            return
+
+        users = await get_all_users(banned=False)
+        if not users:
+            await callback.message.edit_text("❌ Нет пользователей.")
+            return
+
+        await callback.message.edit_text(f"📢 Начинаю рассылку {len(users)} пользователям...")
+
+        success = 0
+        fail = 0
+        for uid in users:
+            try:
+                await bot.send_message(uid, f"📢 Рассылка:\n\n{text}")
+                success += 1
+                await asyncio.sleep(0.05)  # небольшая задержка, чтобы не флудить
+            except Exception:
+                fail += 1
+
+        await callback.message.edit_text(
+            f"✅ Рассылка завершена.\n"
+            f"Успешно: {success}\n"
+            f"Не удалось: {fail}"
+        )
 
 # === ЗАПУСК ===
 async def main():
