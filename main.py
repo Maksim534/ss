@@ -388,7 +388,7 @@ async def cmd_broadcast(message: Message):
     builder.button(text="✅ Подтвердить", callback_data=f"broadcast_confirm|{message.message_id}")
     builder.button(text="❌ Отмена", callback_data="broadcast_cancel")
     await message.reply(
-        f"📢 Будет отправлено **{len(users)}** пользователям.\n\nТекст:\n{text}",
+        f"📢 Будет отправлено <b>{len(users)}</b> пользователям.\n\nТекст:\n{text}",
         reply_markup=builder.as_markup()
     )
 
