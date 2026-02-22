@@ -89,8 +89,6 @@ async def get_all_users(banned=False):
     return [row[0] for row in rows]
 
 # ========== КОМАНДЫ ДЛЯ АДМИНОВ (работают только в группе) ==========
-# Эти хэндлеры должны быть первыми, чтобы перехватывать команды до общего обработчика
-
 @dp.message(Command("ban"), F.chat.id == ADMIN_GROUP_ID)
 async def cmd_ban(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -226,10 +224,8 @@ async def broadcast_callback(callback: types.CallbackQuery):
         )
 
 # ========== ОБРАБОТЧИК ОТВЕТОВ АДМИНОВ В ГРУППЕ ==========
-# Этот хэндлер сработает только на сообщения, которые не являются командами (потому что команды уже отловлены выше)
 @dp.message(F.chat.id == ADMIN_GROUP_ID)
 async def handle_group_reply(message: Message):
-    # Проверяем, что это ответ на какое-то сообщение и автор - админ
     if not message.reply_to_message or message.from_user.id not in ADMIN_IDS:
         return
 
@@ -272,14 +268,21 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
-    caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})\n\n{message.text or ''}"
+    # Формируем подпись для админ-группы
+    caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})"
+    if message.text:
+        caption += f"\n\n{message.text}"
 
+    # Если сообщение содержит медиа (фото, видео, гифку, стикер и т.д.)
     if message.content_type != ContentType.TEXT:
+        # Копируем медиа в группу с подписью
         sent = await message.copy_to(chat_id=ADMIN_GROUP_ID, caption=caption)
     else:
+        # Просто текст
         sent = await bot.send_message(chat_id=ADMIN_GROUP_ID, text=caption)
 
     await save_message_link(user_id, sent.message_id, message.message_id)
+    await message.reply("✅ Ваше сообщение отправлено администратору. Ожидайте ответа.")
 
 # ========== ЗАПУСК ==========
 async def main():
