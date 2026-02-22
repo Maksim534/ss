@@ -7,9 +7,9 @@ from aiogram.types import Message, ContentType
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # === НАСТРОЙКИ ===
-BOT_TOKEN = "8082248663:AAHwLh-RI-SKJkf3b7e-WeUjzkT31tOjYec"
-ADMIN_GROUP_ID = -1003893913068  # ID группы (отрицательное)
-SUPER_ADMIN_IDS = [8564427714]   # ID супер-админов (могут управлять админами и имеют все права)
+BOT_TOKEN = "8225074086:AAF49H3-_B2QgOJQXsguMHnl5acKJrSfocw"
+ADMIN_GROUP_ID = -1003733968985  # ID группы (отрицательное)
+SUPER_ADMIN_IDS = [6888643375]   # ID супер-админов (могут управлять админами и имеют все права)
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
