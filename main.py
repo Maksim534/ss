@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # === НАСТРОЙКИ ===
 BOT_TOKEN = "8082248663:AAHwLh-RI-SKJkf3b7e-WeUjzkT31tOjYec"
 ADMIN_GROUP_ID = -1003893913068  # ID группы (отрицательное)
-ADMIN_IDS = [8564427714]  # Твой Telegram ID (можно добавить ещё через запятую)
+ADMIN_IDS = [8564427714]  # Твой Telegram ID
 
 # === ИНИЦИАЛИЗАЦИЯ ===
 bot = Bot(token=BOT_TOKEN)
@@ -270,7 +270,9 @@ async def handle_private_message(message: Message):
 
     # Формируем подпись для админ-группы
     caption = f"📩 Новое сообщение от @{message.from_user.username or 'NoUsername'} ({user_id})"
-    if message.text:
+    if message.caption:
+        caption += f"\n\n{message.caption}"
+    elif message.text:
         caption += f"\n\n{message.text}"
 
     # Если сообщение содержит медиа (фото, видео, гифку, стикер и т.д.)
