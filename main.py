@@ -7,7 +7,7 @@ from aiogram.types import Message, ContentType
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # === НАСТРОЙКИ ===
-BOT_TOKEN = "8225074086:AAF49H3-_B2QgOJQXsguMHnl5acKJrSfocw"
+BOT_TOKEN = "8225074086:AAHxcYdmnuV56dfR8np2a7vakK1AxqrEiFI"
 ADMIN_GROUP_ID = -1003733968985  # ID группы (отрицательное)
 SUPER_ADMIN_IDS = [6888643375]   # ID супер-админов (могут управлять админами и имеют все права)
 
