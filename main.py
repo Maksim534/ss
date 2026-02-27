@@ -650,15 +650,7 @@ async def cmd_start(message: Message, bot: Bot):
     # Игнорируем команды (начинаются с /)
     text_to_check = message.text or message.caption or ''
     if text_to_check.startswith('/'):
-        await message.reply("❌ Эта команда не поддерживается. Просто напиш@dp.message(Command("start"))
-async def cmd_start(message: Message, bot: Bot):
-    greeting = "👋 Добро пожаловать! Я бот поддержки."
-    await send_emoji_at_end(
-        bot=bot,
-        chat_id=message.chat.id,
-        text=greeting,
-        emoji_id="5366250809568814018"
-    )ите сообщение, и администратор ответит вам.")
+        await message.reply("❌ Эта команда не поддерживается")
         return
 
     # Формируем подпись для админ-группы
