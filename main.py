@@ -85,30 +85,6 @@ async def add_or_update_user(user_id, username, full_name):
 
 
 
-async def send_emoji_at_end(bot: Bot, chat_id: int, text: str, emoji_id: str):
-    """
-    Отправляет сообщение, где премиум-эмодзи находится в самом конце текста.
-    """
-    placeholder = '⃣'  # символ-заглушка (один символ)
-    full_text = text + placeholder  # склеиваем без пробела
-    
-    offset = len(text)  # позиция заглушки (начинается с 0)
-    
-    entity = MessageEntity(
-        type=MessageEntityType.CUSTOM_EMOJI,
-        offset=offset,
-        length=1,
-        custom_emoji_id=emoji_id
-    )
-    
-    await bot.send_message(
-        chat_id=chat_id,
-        text=full_text,
-        entities=[entity]
-    )
-
-
-
 
 
 
