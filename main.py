@@ -5,6 +5,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, ContentType
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import MessageEntity
+from aiogram.enums import MessageEntityType
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = "8225074086:AAHxcYdmnuV56dfR8np2a7vakK1AxqrEiFI"
@@ -80,6 +82,49 @@ async def add_or_update_user(user_id, username, full_name):
               (user_id, username, full_name, user_id))
     conn.commit()
     conn.close()
+
+
+from aiogram.types import MessageEntity
+from aiogram.enums import MessageEntityType
+
+async def send_premium_emoji(chat_id: int, emoji_id: str, text_before: str = "", text_after: str = ""):
+    """
+    Отправляет сообщение с премиум эмодзи.
+    :param chat_id: ID получателя
+    :param emoji_id: ID премиум эмодзи (например, "5366250809568814018")
+    :param text_before: Текст перед эмодзи (необязательно)
+    :param text_after: Текст после эмодзи (необязательно)
+    """
+    # Собираем полный текст сообщения
+    full_text = text_before + " " + text_after
+    # Определяем позицию эмодзи (после text_before и пробела)
+    offset = len(text_before) + 1 if text_before else 0
+    # Длина эмодзи в тексте — 1 символ (мы ставим заглушку, например '⃣')
+    # Но для корректного отображения лучше использовать реальный символ-заглушку,
+    # например, пробел или символ '⃣'. Сам эмодзи будет заменен Telegram.
+    # Мы вставим в текст символ '⃣' (keycap), чтобы зарезервировать место.
+    placeholder = '⃣'
+    full_text = (text_before + " " + placeholder + " " + text_after).strip()
+
+    # Создаем сущность для премиум эмодзи
+    # offset рассчитывается заново для нового full_text
+    offset = len(text_before) + 1 if text_before else 0
+    if text_before:
+        offset += 1 # пробел после text_before
+
+    entity = MessageEntity(
+        type=MessageEntityType.CUSTOM_EMOJI,
+        offset=offset,
+        length=1,  # длина placeholder'а
+        custom_emoji_id=emoji_id
+    )
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=full_text,
+        entities=[entity]
+    )
+
 
 async def set_banned(user_id, banned):
     conn = sqlite3.connect('support.db')
