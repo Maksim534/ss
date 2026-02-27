@@ -637,9 +637,9 @@ async def handle_private_message(message: Message):
 
 
 @dp.message(Command("start"))
-async def cmd_start(message: Message, bot: Bot):
+async def cmd_start(message: Message):
     greeting = "👋 Добро пожаловать! Я бот поддержки."
-    await message.reply(greeting)
+    await message.answer(greeting)  # или bot.send_message(message.chat.id, greeting)
 
     
     # Игнорируем команды (начинаются с /)
