@@ -126,6 +126,18 @@ async def send_premium_emoji(chat_id: int, emoji_id: str, text_before: str = "",
     )
 
 
+@dp.message(Command("testemoji"))
+async def cmd_test_emoji(message: Message):
+    await send_premium_emoji(
+        chat_id=message.chat.id,
+        emoji_id="5366250809568814018",
+        text_before="Привет!",
+        text_after="как дела?"
+    )
+    # Удалим команду, чтобы не засорять чат (опционально)
+    await message.delete()
+
+
 async def set_banned(user_id, banned):
     conn = sqlite3.connect('support.db')
     c = conn.cursor()
