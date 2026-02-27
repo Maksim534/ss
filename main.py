@@ -154,6 +154,12 @@ async def get_all_users(banned=False):
     conn.close()
     return [row[0] for row in rows]
 
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    greeting = "👋 Добро пожаловать! Я бот поддержки."
+    await message.answer(greeting)  # или bot.
+
+
 # === ФУНКЦИИ ДЛЯ РАБОТЫ С АДМИНАМИ ===
 async def is_admin(user_id):
     conn = sqlite3.connect('support.db')
@@ -611,11 +617,6 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
-
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    greeting = "👋 Добро пожаловать! Я бот поддержки."
-    await message.answer(greeting)  # или bot.send_message(message.chat.id, greeting)
 
     
     # Игнорируем команды (начинаются с /)
