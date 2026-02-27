@@ -639,12 +639,7 @@ async def handle_private_message(message: Message):
 @dp.message(Command("start"))
 async def cmd_start(message: Message, bot: Bot):
     greeting = "👋 Добро пожаловать! Я бот поддержки."
-    await send_emoji_at_end(
-        bot=bot,
-        chat_id=message.chat.id,
-        text=greeting,
-        emoji_id="5366250809568814018"
-    )
+    await message.answer(greeting)
 
     
     # Игнорируем команды (начинаются с /)
