@@ -84,41 +84,23 @@ async def add_or_update_user(user_id, username, full_name):
     conn.close()
 
 
-from aiogram.types import MessageEntity
-from aiogram.enums import MessageEntityType
 
-async def send_premium_emoji(chat_id: int, emoji_id: str, text_before: str = "", text_after: str = ""):
+async def send_emoji_at_end(bot: Bot, chat_id: int, text: str, emoji_id: str):
     """
-    Отправляет сообщение с премиум эмодзи.
-    :param chat_id: ID получателя
-    :param emoji_id: ID премиум эмодзи (например, "5366250809568814018")
-    :param text_before: Текст перед эмодзи (необязательно)
-    :param text_after: Текст после эмодзи (необязательно)
+    Отправляет сообщение, где премиум-эмодзи находится в самом конце текста.
     """
-    # Собираем полный текст сообщения
-    full_text = text_before + " " + text_after
-    # Определяем позицию эмодзи (после text_before и пробела)
-    offset = len(text_before) + 1 if text_before else 0
-    # Длина эмодзи в тексте — 1 символ (мы ставим заглушку, например '⃣')
-    # Но для корректного отображения лучше использовать реальный символ-заглушку,
-    # например, пробел или символ '⃣'. Сам эмодзи будет заменен Telegram.
-    # Мы вставим в текст символ '⃣' (keycap), чтобы зарезервировать место.
-    placeholder = '⃣'
-    full_text = (text_before + " " + placeholder + " " + text_after).strip()
-
-    # Создаем сущность для премиум эмодзи
-    # offset рассчитывается заново для нового full_text
-    offset = len(text_before) + 1 if text_before else 0
-    if text_before:
-        offset += 1 # пробел после text_before
-
+    placeholder = '⃣'  # символ-заглушка (один символ)
+    full_text = text + placeholder  # склеиваем без пробела
+    
+    offset = len(text)  # позиция заглушки (начинается с 0)
+    
     entity = MessageEntity(
         type=MessageEntityType.CUSTOM_EMOJI,
         offset=offset,
-        length=1,  # длина placeholder'а
+        length=1,
         custom_emoji_id=emoji_id
     )
-
+    
     await bot.send_message(
         chat_id=chat_id,
         text=full_text,
@@ -126,16 +108,8 @@ async def send_premium_emoji(chat_id: int, emoji_id: str, text_before: str = "",
     )
 
 
-@dp.message(Command("testemoji"))
-async def cmd_test_emoji(message: Message):
-    await send_premium_emoji(
-        chat_id=message.chat.id,
-        emoji_id="5366250809568814018",
-        text_before="Привет!",
-        text_after="как дела?"
-    )
-    # Удалим команду, чтобы не засорять чат (опционально)
-    await message.delete()
+
+
 
 
 async def set_banned(user_id, banned):
@@ -649,12 +623,7 @@ async def handle_group_reply(message: Message):
         await message.reply(f"❌ Ошибка при отправке: {e}")
 
 # ========== ОБРАБОТЧИКИ ЛИЧНЫХ СООБЩЕНИЙ ==========
-@dp.message(Command("start"), F.chat.type == "private")
-async def cmd_start(message: Message):
-    await add_or_update_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
-    text = ("👋 Привет! Я бот поддержки. Напиши мне сообщение, и оно будет передано нашим специалистам.\n"
-            "Они ответят тебе в ближайшее время.")
-    await message.reply(text)
+
 
 @dp.message(F.chat.type == "private")
 async def handle_private_message(message: Message):
@@ -666,10 +635,30 @@ async def handle_private_message(message: Message):
         await message.reply("❌ Вы заблокированы и не можете писать в поддержку.")
         return
 
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message, bot: Bot):
+    greeting = "👋 Добро пожаловать! Я бот поддержки."
+    await send_emoji_at_end(
+        bot=bot,
+        chat_id=message.chat.id,
+        text=greeting,
+        emoji_id="5366250809568814018"
+    )
+
+    
     # Игнорируем команды (начинаются с /)
     text_to_check = message.text or message.caption or ''
     if text_to_check.startswith('/'):
-        await message.reply("❌ Эта команда не поддерживается. Просто напишите сообщение, и администратор ответит вам.")
+        await message.reply("❌ Эта команда не поддерживается. Просто напиш@dp.message(Command("start"))
+async def cmd_start(message: Message, bot: Bot):
+    greeting = "👋 Добро пожаловать! Я бот поддержки."
+    await send_emoji_at_end(
+        bot=bot,
+        chat_id=message.chat.id,
+        text=greeting,
+        emoji_id="5366250809568814018"
+    )ите сообщение, и администратор ответит вам.")
         return
 
     # Формируем подпись для админ-группы
